@@ -540,7 +540,7 @@
         const SPEED_CONVERSION_FACTOR = 100; // 1 px/frame -> 100 m/s
         const BOLTZMANN = 1.380649e-23; // J/K
         const AMU = 1.660539e-27; // kg
-        let maxContainerWidth = 0, wallCollisionCount = 0, totalMomentumTransfer = 0;
+        let maxContainerWidth = 0, wallCollisionCount = 0;
 
         let state = {
             pressure: 0.0,
@@ -577,7 +577,9 @@
                 this.y = this.radius + Math.random() * (dom.container.clientHeight - 2 * this.radius);
                 
                 const angle = Math.random() * 2 * Math.PI;
-                const speed = (Math.sqrt(state.temperature) / this.mass) * 0.5;
+                // Correct speed initialization for 2D, based on <Ek> = kT
+                const v_rms = Math.sqrt((2 * BOLTZMANN * state.temperature) / this.massKg);
+                const speed = v_rms / SPEED_CONVERSION_FACTOR;
                 this.vx = Math.cos(angle) * speed;
                 this.vy = Math.sin(angle) * speed;
             }
@@ -663,9 +665,10 @@
              const totalParticles = state.lightCount + state.heavyCount;
              const V_m3 = state.volume / 1000.0;
              if (totalParticles > 0 && V_m3 > 0) {
-                const n_moles = totalParticles / 100.0; // Scaled number of moles
-                const P_atm = (n_moles * 0.0821 * state.temperature) / state.volume;
-                state.pressure = P_atm;
+                // Using 2D ideal gas law: P*V = N*k*T
+                const N_scaled = totalParticles * (NA / 100.0);
+                const P_Pa = (N_scaled * BOLTZMANN * state.temperature) / V_m3;
+                state.pressure = P_Pa / 101325; // Convert Pa to atm
              } else {
                 state.pressure = 0;
              }
@@ -891,18 +894,17 @@
                 return;
             }
 
-            let totalSqSpeed = 0;
+            let totalKE = 0;
             particles.forEach(p => {
                 const speed_ms = Math.sqrt(p.vx**2 + p.vy**2) * SPEED_CONVERSION_FACTOR;
-                totalSqSpeed += speed_ms**2;
+                totalKE += 0.5 * p.massKg * speed_ms**2;
             });
-
-            const avgSqSpeed = totalSqSpeed / totalParticles;
-            const avgMassKg = (state.lightCount * (1 * AMU * 20) + state.heavyCount * (4 * AMU * 20)) / totalParticles;
             
-            // Pressure from kinetic theory P = (1/3) * (N/V) * m * <v²>
-            const N = totalParticles * (NA / 100); // Scale up particle number to represent a macroscopic sample
-            const pressureInPa = (1/3) * (N / V_m3) * avgMassKg * avgSqSpeed;
+            const avgKE = totalKE / totalParticles;
+            
+            // For a 2D gas, P = N * <Ek> / V
+            const N_scaled = totalParticles * (NA / 100);
+            const pressureInPa = (N_scaled * avgKE) / V_m3;
             
             let smoothedPressure = state.kineticPressure * 0.9 + (pressureInPa / 101325) * 0.1;
             state.kineticPressure = smoothedPressure;
@@ -917,19 +919,19 @@
             const snapshot = {
                 'T (K)': tempK.toFixed(0),
                 'N Total': state.lightCount + state.heavyCount,
-                '⟨Eₖ⟩ (J)': ((state.lightCount + state.heavyCount > 0) ? (1.5 * BOLTZMANN * tempK) : 0),
+                '⟨Eₖ⟩ (J)': ((state.lightCount + state.heavyCount > 0) ? (BOLTZMANN * tempK) : 0),
                 'v̅ Sim. L (m/s)': state.lightCount > 0 ? parseFloat(dom.lightAvgSpeedDisplay.textContent) : 0,
                 'v̅ Sim. P (m/s)': state.heavyCount > 0 ? parseFloat(dom.heavyAvgSpeedDisplay.textContent) : 0,
             };
 
             if (state.isAdvancedMode) {
                 snapshot['P Cinética (atm)'] = state.kineticPressure;
-                snapshot['vₚ Teo. L (m/s)'] = Math.sqrt(2 * BOLTZMANN * tempK / lightMassKg);
-                snapshot['v̅ Teo. L (m/s)'] = Math.sqrt(8 * BOLTZMANN * tempK / (Math.PI * lightMassKg));
-                snapshot['vᵣₘₛ Teo. L (m/s)'] = Math.sqrt(3 * BOLTZMANN * tempK / lightMassKg);
-                snapshot['vₚ Teo. P (m/s)'] = Math.sqrt(2 * BOLTZMANN * tempK / heavyMassKg);
-                snapshot['v̅ Teo. P (m/s)'] = Math.sqrt(8 * BOLTZMANN * tempK / (Math.PI * heavyMassKg));
-                snapshot['vᵣₘₛ Teo. P (m/s)'] = Math.sqrt(3 * BOLTZMANN * tempK / heavyMassKg);
+                snapshot['vₚ Teo. L (m/s)'] = Math.sqrt(BOLTZMANN * tempK / lightMassKg);
+                snapshot['v̅ Teo. L (m/s)'] = Math.sqrt(Math.PI * BOLTZMANN * tempK / (2 * lightMassKg));
+                snapshot['vᵣₘₛ Teo. L (m/s)'] = Math.sqrt(2 * BOLTZMANN * tempK / lightMassKg);
+                snapshot['vₚ Teo. P (m/s)'] = Math.sqrt(BOLTZMANN * tempK / heavyMassKg);
+                snapshot['v̅ Teo. P (m/s)'] = Math.sqrt(Math.PI * BOLTZMANN * tempK / (2 * heavyMassKg));
+                snapshot['vᵣₘₛ Teo. P (m/s)'] = Math.sqrt(2 * BOLTZMANN * tempK / heavyMassKg);
             }
             
             dataLog.push(snapshot);
@@ -1026,8 +1028,8 @@
             const lightMassKg = 1 * AMU * 20;
             const heavyMassKg = 4 * AMU * 20;
 
-            const v_rms_l_teo = Math.sqrt(3 * BOLTZMANN * tempK / lightMassKg) || 1;
-            const v_rms_h_teo = Math.sqrt(3 * BOLTZMANN * tempK / heavyMassKg) || 1;
+            const v_rms_l_teo = Math.sqrt(2 * BOLTZMANN * tempK / lightMassKg) || 1;
+            const v_rms_h_teo = Math.sqrt(2 * BOLTZMANN * tempK / heavyMassKg) || 1;
             
             const numSpeedBins = 20, maxSpeed = 1500;
             const speedBinSize = maxSpeed / numSpeedBins;
@@ -1081,12 +1083,12 @@
 
             dom.lightAvgSpeedDisplay.textContent = `${avgLightSpeed.toFixed(0)} m/s`;
             dom.heavyAvgSpeedDisplay.textContent = `${avgHeavySpeed.toFixed(0)} m/s`;
-
-            const v_p_l = Math.sqrt(2 * BOLTZMANN * tempK / lightMassKg);
-            const v_avg_l = Math.sqrt(8 * BOLTZMANN * tempK / (Math.PI * lightMassKg));
             
-            const v_p_h = Math.sqrt(2 * BOLTZMANN * tempK / heavyMassKg);
-            const v_avg_h = Math.sqrt(8 * BOLTZMANN * tempK / (Math.PI * heavyMassKg));
+            const v_p_l = Math.sqrt(BOLTZMANN * tempK / lightMassKg);
+            const v_avg_l = Math.sqrt(Math.PI * BOLTZMANN * tempK / (2 * lightMassKg));
+            
+            const v_p_h = Math.sqrt(BOLTZMANN * tempK / heavyMassKg);
+            const v_avg_h = Math.sqrt(Math.PI * BOLTZMANN * tempK / (2 * heavyMassKg));
 
             dom.lightVpDisplay.textContent = `${v_p_l.toFixed(0)} m/s`;
             dom.lightVavgDisplay.textContent = `${v_avg_l.toFixed(0)} m/s`;
@@ -1235,18 +1237,18 @@
                         <h4 class="font-bold text-base text-sky-400">Análisis Físico (Modo Avanzado)</h4>
                         <p class="text-xs text-gray-400 mb-2">Las gráficas y parámetros te permiten comparar el comportamiento de las partículas simuladas con la teoría cinética de los gases.</p>
                         <div class="space-y-3">
-                            <p><strong>Temperatura y Energía Cinética:</strong> La temperatura de un gas es una medida directa de la energía cinética media de sus partículas. La simulación muestra este valor (⟨Eₖ⟩) calculado en Julios, que cumple la relación:</p>
-                             <p class='text-center text-sm font-mono bg-slate-900 p-2 rounded'>⟨Eₖ⟩ = ³/₂ kₒ T</p>
-                            <p><strong>Distribución de Maxwell-Boltzmann:</strong> La gráfica de velocidad muestra la distribución de Maxwell-Boltzmann. Esta predice cuántas partículas en un gas a una temperatura T se moverán a una cierta velocidad v.</p>
-                             <p class='text-center text-sm font-mono bg-slate-900 p-2 rounded'>f(v) = 4π (m / 2πkₒT)³/² v² e<sup>-mv²/2kₒT</sup></p>
-                            <p><strong>Normalización (¡El WOW!):</strong> Al pulsar "Normalizar Gráfica", el eje de velocidad se recalcula como v/vᵣₘₛ. Verás que las curvas de partículas ligeras y pesadas, antes distintas, colapsan en una sola curva universal. Esto demuestra que, estadísticamente, todos los gases se comportan igual independientemente de la masa de sus partículas si se escalan por su velocidad RMS.</p>
-                            <p><strong>Velocidades Notables:</strong> En los parámetros del sistema verás tres velocidades características:</p>
+                            <p><strong>Temperatura y Energía Cinética:</strong> La temperatura de un gas es una medida directa de la energía cinética media de sus partículas. En 2D, esta relación es:</p>
+                             <p class='text-center text-sm font-mono bg-slate-900 p-2 rounded'>⟨Eₖ⟩ = kₒ T</p>
+                            <p><strong>Distribución de Maxwell-Boltzmann (2D):</strong> La gráfica de velocidad muestra cómo se distribuyen las velocidades de las partículas. La fórmula para 2D es:</p>
+                             <p class='text-center text-sm font-mono bg-slate-900 p-2 rounded'>f(v) = (m/kₒT) v e<sup>-mv²/2kₒT</sup></p>
+                            <p><strong>Normalización (¡El WOW!):</strong> Al pulsar "Normalizar Gráfica", el eje de velocidad se recalcula como v/vᵣₘₛ. Verás que las curvas de partículas ligeras y pesadas, antes distintas, colapsan en una sola curva universal. Esto demuestra que, estadísticamente, todos los gases se comportan igual independientemente de la masa si se escalan por su velocidad RMS.</p>
+                            <p><strong>Velocidades Notables (2D):</strong> En los parámetros del sistema verás tres velocidades características para un sistema 2D:</p>
                             <ul class="list-disc list-inside text-sm text-gray-300 space-y-2 mt-1 pl-4">
-                                <li><strong>Velocidad más probable (vₚ):</strong> El pico de la curva de distribución. <br> vₚ = √(2kₒT / m)</li>
-                                <li><strong>Velocidad media (v̄):</strong> El promedio de las velocidades. <br> v̄ = √(8kₒT / πm)</li>
-                                <li><strong>Velocidad RMS (vᵣₘₛ):</strong> Relacionada con la energía cinética media. <br> vᵣₘₛ = √(3kₒT / m)</li>
+                                <li><strong>Velocidad más probable (vₚ):</strong> vₚ = √(kₒT / m)</li>
+                                <li><strong>Velocidad media (v̄):</strong> v̄ = √(πkₒT / 2m)</li>
+                                <li><strong>Velocidad RMS (vᵣₘₛ):</strong> vᵣₘₛ = √(2kₒT / m)</li>
                             </ul>
-                            <p><strong>Origen Microscópico de la Presión:</strong> La presión de un gas se debe a los choques de sus partículas contra las paredes. La simulación calcula esta "Presión Cinética" a partir del movimiento de las partículas (P = (1/3)ρ⟨v²⟩) y la compara con la presión teórica de la ley de los gases ideales.</p>
+                            <p><strong>Origen Microscópico de la Presión:</strong> La presión de un gas se debe a los choques de sus partículas contra las paredes. La simulación calcula esta "Presión Cinética" a partir del movimiento de las partículas (P = (1/2)ρ⟨v²⟩ para 2D) y la compara con la presión teórica de la ley de los gases ideales.</p>
                         </div>
                     </div>
                      <div>
