@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Simulador de Partículas v2.0</title>
+    <title>Simulador de Partículas v2.2</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-annotation/1.4.0/chartjs-plugin-annotation.min.js"></script>
@@ -258,7 +258,7 @@
                 </div>
                 <div id="pressure-meter" class="widget advanced-feature">
                     <div class="flex items-center gap-2">
-                        <span class="text-[10px] text-gray-400">P<sub>colisiones</sub>:</span>
+                        <span class="text-[10px] text-gray-400">P<sub>cinética</sub>:</span>
                         <span id="pressure-meter-display" class="font-mono text-sm text-green-400 w-20 text-center">0.00 atm</span>
                     </div>
                 </div>
@@ -359,7 +359,7 @@
                         <span id="ideal-pressure-display" class="font-semibold text-white text-right">0.00 atm</span>
                     </div>
                     <div class="flex justify-between items-center advanced-feature">
-                        <span class="text-gray-400">Presión (Colisiones): </span>
+                        <span class="text-gray-400">Presión (Cinética): </span>
                         <span id="collision-pressure-display" class="font-semibold text-white text-right">0.00 atm</span>
                     </div>
                     <div class="flex justify-between items-center">
@@ -416,6 +416,7 @@
             </div>
             
             <div id="charts-container" class="advanced-feature hidden space-y-4 pt-4 border-t border-slate-700">
+                 <button id="normalize-chart-btn" class="w-full bg-slate-600 hover:bg-slate-700 text-white font-bold py-1.5 px-4 rounded-md transition-all text-xs">Normalizar Gráfica</button>
                 <div class="bg-slate-800/50 p-3 rounded-lg">
                      <h4 class="text-xs font-bold text-sky-400 mb-2 text-center">Distribución de Velocidad</h4>
                      <div class="chart-wrapper">
@@ -522,6 +523,7 @@
             pressureMeterDisplay: document.getElementById('pressure-meter-display'),
             collisionPressureDisplay: document.getElementById('collision-pressure-display'),
             idealPressureDisplay: document.getElementById('ideal-pressure-display'),
+            normalizeChartBtn: document.getElementById('normalize-chart-btn'),
         };
 
         const ctx = dom.canvas.getContext('2d');
@@ -532,7 +534,9 @@
         let tempInterval, stopwatchInterval, collisionTimeout, pressureInterval;
         let speedChart = null, energyChart = null;
         
-        const R = 0.0821, MAX_PRESSURE = 50, MAX_VOLUME = 12.0;
+        const R = 8.314; // J/(mol·K)
+        const NA = 6.022e23; // Avogadro's number
+        const MAX_PRESSURE = 50, MAX_VOLUME = 12.0;
         const SPEED_CONVERSION_FACTOR = 100; // 1 px/frame -> 100 m/s
         const BOLTZMANN = 1.380649e-23; // J/K
         const AMU = 1.660539e-27; // kg
@@ -540,7 +544,7 @@
 
         let state = {
             pressure: 0.0,
-            collisionPressure: 0.0,
+            kineticPressure: 0.0,
             volume: MAX_VOLUME,
             temperature: 300,
             lightCount: 0,
@@ -556,6 +560,7 @@
             stopwatchStart: 0,
             isCountingCollisions: false,
             isAdvancedMode: false,
+            isChartNormalized: false,
         };
 
         class Particle {
@@ -563,7 +568,7 @@
                 this.isLight = type === 'light';
                 this.radius = this.isLight ? 4 : 7;
                 this.mass = this.isLight ? 1 : 4; // Mass in arbitrary units (related to amu)
-                this.massKg = this.mass * AMU * 10; // Scaled for better visualization
+                this.massKg = this.mass * AMU * 20; // Scaled for better visualization
                 this.color = this.isLight ? '#06b6d4' : '#f43f5e';
                 this.opacity = 1.0;
                 
@@ -590,21 +595,18 @@
             handleWallCollisions(containerWidth) {
                 let collision = false;
                 if (this.x - this.radius < 0) {
-                    totalMomentumTransfer += 2 * this.massKg * Math.abs(this.vx * SPEED_CONVERSION_FACTOR);
                     this.vx *= -1;
                     this.x = this.radius;
                     collision = true;
                 }
                 
                 if (this.x + this.radius > containerWidth) {
-                    totalMomentumTransfer += 2 * this.massKg * Math.abs(this.vx * SPEED_CONVERSION_FACTOR);
                     this.vx *= -1;
                     this.x = containerWidth - this.radius;
                     collision = true;
                 }
                 
                 if (this.y + this.radius > dom.container.clientHeight) { 
-                    totalMomentumTransfer += 2 * this.massKg * Math.abs(this.vy * SPEED_CONVERSION_FACTOR);
                     this.vy *= -1; 
                     this.y = dom.container.clientHeight - this.radius; 
                     collision = true; 
@@ -613,7 +615,6 @@
                 if (this.y - this.radius < 0) {
                     if (this.x > lidClosedWidth) { return false; } 
                     else {
-                        totalMomentumTransfer += 2 * this.massKg * Math.abs(this.vy * SPEED_CONVERSION_FACTOR);
                         this.vy *= -1;
                         this.y = this.radius;
                         collision = true;
@@ -659,8 +660,15 @@
         }
 
         function calculatePressure() {
-             const n = (state.lightCount + state.heavyCount) / 100;
-             state.pressure = state.volume > 0.1 ? (n * R * state.temperature) / state.volume : (n * R * state.temperature) / 0.1;
+             const totalParticles = state.lightCount + state.heavyCount;
+             const V_m3 = state.volume / 1000.0;
+             if (totalParticles > 0 && V_m3 > 0) {
+                const n_moles = totalParticles / 100.0; // Scaled number of moles
+                const P_atm = (n_moles * 0.0821 * state.temperature) / state.volume;
+                state.pressure = P_atm;
+             } else {
+                state.pressure = 0;
+             }
         }
         
         function updateDisplays() {
@@ -674,9 +682,9 @@
             dom.pressureDisplay.textContent = `${pressureValue.toFixed(2)} ${pressureUnitLabel}`;
             dom.idealPressureDisplay.textContent = `${pressureValue.toFixed(2)} ${pressureUnitLabel}`;
             
-            const collisionPressureValue = state.pressureUnit === 'atm' ? state.collisionPressure : state.collisionPressure * 101.325;
-            dom.collisionPressureDisplay.textContent = `${collisionPressureValue.toFixed(2)} ${pressureUnitLabel}`;
-            dom.pressureMeterDisplay.textContent = `${collisionPressureValue.toFixed(2)} ${pressureUnitLabel}`;
+            const kineticPressureValue = state.pressureUnit === 'atm' ? state.kineticPressure : state.kineticPressure * 101.325;
+            dom.collisionPressureDisplay.textContent = `${kineticPressureValue.toFixed(2)} ${pressureUnitLabel}`;
+            dom.pressureMeterDisplay.textContent = `${kineticPressureValue.toFixed(2)} ${pressureUnitLabel}`;
 
             const tempValue = state.tempUnit === 'K' ? tempK : tempK - 273.15;
             const tempUnitLabel = state.tempUnit === 'K' ? 'K' : '°C';
@@ -722,10 +730,17 @@
             if(state.isAdvancedMode) {
                 toggleAdvancedMode(); // This will also hide charts
             }
+            if(state.isChartNormalized) {
+                state.isChartNormalized = false;
+                dom.normalizeChartBtn.classList.remove('bg-emerald-500');
+                dom.normalizeChartBtn.classList.add('bg-slate-600');
+                dom.normalizeChartBtn.textContent = 'Normalizar Gráfica';
+            }
+
 
             maxContainerWidth = dom.containerWrapper.clientWidth;
             
-            state = { pressure: 0.0, collisionPressure: 0.0, volume: MAX_VOLUME, temperature: 300, lightCount: 0, heavyCount: 0, lidOpenRatio: 0.0, isDraggingLid: false, maxVolumeWarningShown: false, minVolumeWarningShown: false, pressureUnit: 'atm', tempUnit: 'K', stopwatchRunning: false, stopwatchTime: 0, stopwatchStart: 0, isCountingCollisions: false, isAdvancedMode: false };
+            state = { pressure: 0.0, kineticPressure: 0.0, volume: MAX_VOLUME, temperature: 300, lightCount: 0, heavyCount: 0, lidOpenRatio: 0.0, isDraggingLid: false, maxVolumeWarningShown: false, minVolumeWarningShown: false, pressureUnit: 'atm', tempUnit: 'K', stopwatchRunning: false, stopwatchTime: 0, stopwatchStart: 0, isCountingCollisions: false, isAdvancedMode: false, isChartNormalized: false };
             particles = [];
             escapedParticles = [];
             wallCollisionCount = 0;
@@ -868,30 +883,36 @@
             }, sampleTimeMs);
         }
         
-        function updateCollisionPressure() {
-            const intervalSeconds = 0.5; // Update every 500ms
+        function updateKineticPressure() {
             const totalParticles = state.lightCount + state.heavyCount;
             const V_m3 = state.volume / 1000.0;
-
-            if (totalParticles > 0 && V_m3 > 0) {
-                const N_scaled = totalParticles * (6.022e23 / 100.0);
-                const pressureInPa = (N_scaled / V_m3) * (1/3) * (totalMomentumTransfer / totalParticles) * SPEED_CONVERSION_FACTOR;
-                
-                // Heuristic smoothing
-                let smoothedPressure = state.collisionPressure * 0.9 + (pressureInPa / 101325) * 0.1;
-                state.collisionPressure = smoothedPressure;
-
-            } else {
-                state.collisionPressure = 0;
+            if(totalParticles === 0 || V_m3 <= 0) {
+                state.kineticPressure = 0;
+                return;
             }
-            totalMomentumTransfer = 0; // Reset for next interval
+
+            let totalSqSpeed = 0;
+            particles.forEach(p => {
+                const speed_ms = Math.sqrt(p.vx**2 + p.vy**2) * SPEED_CONVERSION_FACTOR;
+                totalSqSpeed += speed_ms**2;
+            });
+
+            const avgSqSpeed = totalSqSpeed / totalParticles;
+            const avgMassKg = (state.lightCount * (1 * AMU * 20) + state.heavyCount * (4 * AMU * 20)) / totalParticles;
+            
+            // Pressure from kinetic theory P = (1/3) * (N/V) * m * <v²>
+            const N = totalParticles * (NA / 100); // Scale up particle number to represent a macroscopic sample
+            const pressureInPa = (1/3) * (N / V_m3) * avgMassKg * avgSqSpeed;
+            
+            let smoothedPressure = state.kineticPressure * 0.9 + (pressureInPa / 101325) * 0.1;
+            state.kineticPressure = smoothedPressure;
         }
 
 
         function addDataToLog() {
             const tempK = state.temperature;
-            const lightMassKg = 1 * AMU * 10;
-            const heavyMassKg = 4 * AMU * 10;
+            const lightMassKg = 1 * AMU * 20;
+            const heavyMassKg = 4 * AMU * 20;
         
             const snapshot = {
                 'T (K)': tempK.toFixed(0),
@@ -902,7 +923,7 @@
             };
 
             if (state.isAdvancedMode) {
-                snapshot['P Colisiones (atm)'] = state.collisionPressure;
+                snapshot['P Cinética (atm)'] = state.kineticPressure;
                 snapshot['vₚ Teo. L (m/s)'] = Math.sqrt(2 * BOLTZMANN * tempK / lightMassKg);
                 snapshot['v̅ Teo. L (m/s)'] = Math.sqrt(8 * BOLTZMANN * tempK / (Math.PI * lightMassKg));
                 snapshot['vᵣₘₛ Teo. L (m/s)'] = Math.sqrt(3 * BOLTZMANN * tempK / lightMassKg);
@@ -922,7 +943,7 @@
 
             const allPossibleParams = [
                 'T (K)', 'N Total', '⟨Eₖ⟩ (J)', 'v̅ Sim. L (m/s)', 'v̅ Sim. P (m/s)',
-                'P Colisiones (atm)',
+                'P Cinética (atm)',
                 'vₚ Teo. L (m/s)', 'v̅ Teo. L (m/s)', 'vᵣₘₛ Teo. L (m/s)',
                 'vₚ Teo. P (m/s)', 'v̅ Teo. P (m/s)', 'vᵣₘₛ Teo. P (m/s)'
             ];
@@ -970,7 +991,7 @@
             
             const allPossibleParams = [
                 'T (K)', 'N Total', '⟨Eₖ⟩ (J)', 'v̅ Sim. L (m/s)', 'v̅ Sim. P (m/s)',
-                'P Colisiones (atm)',
+                'P Cinética (atm)',
                 'vₚ Teo. L (m/s)', 'v̅ Teo. L (m/s)', 'vᵣₘₛ Teo. L (m/s)',
                 'vₚ Teo. P (m/s)', 'v̅ Teo. P (m/s)', 'vᵣₘₛ Teo. P (m/s)'
             ];
@@ -1001,10 +1022,22 @@
         function updateAnalytics() {
             let totalLightSpeed = 0, totalHeavySpeed = 0, totalKE = 0;
             
+            const tempK = state.temperature;
+            const lightMassKg = 1 * AMU * 20;
+            const heavyMassKg = 4 * AMU * 20;
+
+            const v_rms_l_teo = Math.sqrt(3 * BOLTZMANN * tempK / lightMassKg) || 1;
+            const v_rms_h_teo = Math.sqrt(3 * BOLTZMANN * tempK / heavyMassKg) || 1;
+            
             const numSpeedBins = 20, maxSpeed = 1500;
             const speedBinSize = maxSpeed / numSpeedBins;
             const speedBinsLight = Array(numSpeedBins).fill(0);
             const speedBinsHeavy = Array(numSpeedBins).fill(0);
+
+            const numNormSpeedBins = 20, maxNormSpeed = 3;
+            const normSpeedBinSize = maxNormSpeed / numNormSpeedBins;
+            const normSpeedBinsLight = Array(numNormSpeedBins).fill(0);
+            const normSpeedBinsHeavy = Array(numNormSpeedBins).fill(0);
 
             const numEnergyBins = 20, maxEnergy = 1e-20;
             const energyBinSize = maxEnergy / numEnergyBins;
@@ -1020,12 +1053,20 @@
                     totalLightSpeed += speed_ms;
                     const speedBin = Math.min(Math.floor(speed_ms / speedBinSize), numSpeedBins - 1);
                     if(speedBin >= 0) speedBinsLight[speedBin]++;
+                    
+                    const normSpeedBin = Math.min(Math.floor((speed_ms / v_rms_l_teo) / normSpeedBinSize), numNormSpeedBins - 1);
+                    if(normSpeedBin >= 0) normSpeedBinsLight[normSpeedBin]++;
+
                     const energyBin = Math.min(Math.floor(kineticEnergy / energyBinSize), numEnergyBins - 1);
                     if(energyBin >= 0) energyBinsLight[energyBin]++;
                 } else {
                     totalHeavySpeed += speed_ms;
                     const speedBin = Math.min(Math.floor(speed_ms / speedBinSize), numSpeedBins - 1);
                     if(speedBin >= 0) speedBinsHeavy[speedBin]++;
+                    
+                    const normSpeedBin = Math.min(Math.floor((speed_ms / v_rms_h_teo) / normSpeedBinSize), numNormSpeedBins - 1);
+                    if(normSpeedBin >= 0) normSpeedBinsHeavy[normSpeedBin]++;
+
                     const energyBin = Math.min(Math.floor(kineticEnergy / energyBinSize), numEnergyBins - 1);
                     if(energyBin >= 0) energyBinsHeavy[energyBin]++;
                 }
@@ -1040,51 +1081,44 @@
 
             dom.lightAvgSpeedDisplay.textContent = `${avgLightSpeed.toFixed(0)} m/s`;
             dom.heavyAvgSpeedDisplay.textContent = `${avgHeavySpeed.toFixed(0)} m/s`;
-            
-            const tempK = state.temperature;
-            const lightMassKg = 1 * AMU * 10;
-            const heavyMassKg = 4 * AMU * 10;
 
             const v_p_l = Math.sqrt(2 * BOLTZMANN * tempK / lightMassKg);
             const v_avg_l = Math.sqrt(8 * BOLTZMANN * tempK / (Math.PI * lightMassKg));
-            const v_rms_l = Math.sqrt(3 * BOLTZMANN * tempK / lightMassKg);
             
             const v_p_h = Math.sqrt(2 * BOLTZMANN * tempK / heavyMassKg);
             const v_avg_h = Math.sqrt(8 * BOLTZMANN * tempK / (Math.PI * heavyMassKg));
-            const v_rms_h = Math.sqrt(3 * BOLTZMANN * tempK / heavyMassKg);
 
             dom.lightVpDisplay.textContent = `${v_p_l.toFixed(0)} m/s`;
             dom.lightVavgDisplay.textContent = `${v_avg_l.toFixed(0)} m/s`;
-            dom.lightVrmsDisplay.textContent = `${v_rms_l.toFixed(0)} m/s`;
+            dom.lightVrmsDisplay.textContent = `${v_rms_l_teo.toFixed(0)} m/s`;
             dom.heavyVpDisplay.textContent = `${v_p_h.toFixed(0)} m/s`;
             dom.heavyVavgDisplay.textContent = `${v_avg_h.toFixed(0)} m/s`;
-            dom.heavyVrmsDisplay.textContent = `${v_rms_h.toFixed(0)} m/s`;
+            dom.heavyVrmsDisplay.textContent = `${v_rms_h_teo.toFixed(0)} m/s`;
             
             if (state.isAdvancedMode && speedChart && energyChart && !dom.chartsContainer.classList.contains('hidden')) {
-                const mbLightData = speedChart.data.labels.map(label => {
-                    const speed = parseFloat(label.split('-')[0]);
-                    return maxwellBoltzmann(speed, lightMassKg, tempK) * state.lightCount * speedBinSize;
-                });
-                const mbHeavyData = speedChart.data.labels.map(label => {
-                    const speed = parseFloat(label.split('-')[0]);
-                    return maxwellBoltzmann(speed, heavyMassKg, tempK) * state.heavyCount * speedBinSize;
-                });
+                if (state.isChartNormalized) {
+                    speedChart.data.datasets[0].data = normSpeedBinsLight;
+                    speedChart.data.datasets[1].data = normSpeedBinsHeavy;
+                } else {
+                    speedChart.data.datasets[0].data = speedBinsLight;
+                    speedChart.data.datasets[1].data = speedBinsHeavy;
+                }
                 
-                speedChart.data.datasets[0].data = speedBinsLight;
-                speedChart.data.datasets[1].data = speedBinsHeavy;
-                speedChart.data.datasets[2].data = mbLightData;
-                speedChart.data.datasets[3].data = mbHeavyData;
-
-                speedChart.options.plugins.annotation.annotations = {
-                    vp_l: createAnnotationLine(v_p_l, 'v\u209a', '#06b6d4'),
-                    vavg_l: createAnnotationLine(v_avg_l, 'v\u0304', '#0891b2'),
-                    vrms_l: createAnnotationLine(v_rms_l, 'v\u1D63\u2098\u209b', '#0e7490'),
-                    vp_h: createAnnotationLine(v_p_h, 'v\u209a', '#f43f5e'),
-                    vavg_h: createAnnotationLine(v_avg_h, 'v\u0304', '#e11d48'),
-                    vrms_h: createAnnotationLine(v_rms_h, 'v\u1D63\u2098\u209b', '#be123c'),
-                };
+                let maxSpeedCount = 0;
+                speedChart.data.datasets.forEach(dataset => {
+                    const maxVal = Math.max(...dataset.data);
+                    if (maxVal > maxSpeedCount) maxSpeedCount = maxVal;
+                });
+                speedChart.options.scales.y.suggestedMax = Math.max(10, Math.ceil(maxSpeedCount / 5) * 5 + 5);
 
                 speedChart.update('none');
+
+                let maxEnergyCount = 0;
+                energyChart.data.datasets.forEach(dataset => {
+                     const maxVal = Math.max(...dataset.data);
+                    if (maxVal > maxEnergyCount) maxEnergyCount = maxVal;
+                });
+                energyChart.options.scales.y.suggestedMax = Math.max(10, Math.ceil(maxEnergyCount / 5) * 5 + 5);
 
                 energyChart.data.datasets[0].data = energyBinsLight;
                 energyChart.data.datasets[1].data = energyBinsHeavy;
@@ -1092,57 +1126,20 @@
             }
         }
         
-        function maxwellBoltzmann(v, m, T) {
-            if (T <= 0) return 0;
-            return (m / (2 * Math.PI * BOLTZMANN * T))**1.5 * 4 * Math.PI * v**2 * Math.exp(-m * v**2 / (2 * BOLTZMANN * T));
-        }
-        
-        function createAnnotationLine(value, label, color) {
-            return {
-                type: 'line',
-                scaleID: 'x',
-                value: value,
-                borderColor: color,
-                borderWidth: 1,
-                borderDash: [6, 6],
-                label: {
-                    content: label,
-                    enabled: true,
-                    position: 'start',
-                    backgroundColor: 'rgba(0,0,0,0.5)',
-                    font: { size: 9 },
-                    color: color,
-                }
-            };
-        }
-
-
         function initCharts() {
             if (speedChart) speedChart.destroy();
             if (energyChart) energyChart.destroy();
+            
+            const isNormalized = state.isChartNormalized;
 
-             const chartOptions = (unit, isEnergy = false) => ({
+            const speedChartOptions = {
                 responsive: true,
                 maintainAspectRatio: false,
                 scales: {
                     x: {
-                        title: { display: true, text: unit, color: '#9ca3af' },
+                        title: { display: true, text: isNormalized ? 'Velocidad Normalizada (v/vᵣₘₛ)' : 'Velocidad (m/s)', color: '#9ca3af' },
                         grid: { color: 'rgba(156, 163, 175, 0.1)' },
-                        ticks: { 
-                            color: '#9ca3af', 
-                            font: { size: 10 },
-                            callback: function(value, index, ticks) {
-                                if (!this.chart.data || !this.chart.data.labels) return '';
-                                const labels = this.chart.data.labels;
-                                if (index < labels.length) {
-                                    if (isEnergy) {
-                                        return index % 2 === 0 ? Number.parseFloat(labels[index]).toExponential(0) : '';
-                                    }
-                                    return index % 2 === 0 ? labels[index].split('-')[0] : '';
-                                }
-                                return '';
-                            }
-                        }
+                        ticks: { color: '#9ca3af', font: { size: 10 } }
                     },
                     y: {
                         title: { display: true, text: 'Nº de Partículas', color: '#9ca3af' },
@@ -1156,26 +1153,30 @@
                     legend: { labels: { color: '#9ca3af', padding: 20 } },
                     annotation: { annotations: {} }
                 }
-            });
-
-            const numSpeedBins = 20, maxSpeed = 1500;
-            const speedBinSize = maxSpeed / numSpeedBins;
-            const speedLabels = Array.from({length: numSpeedBins}, (_, i) => `${Math.round(i * speedBinSize)}-${Math.round((i + 1) * speedBinSize)}`);
+            };
             
-            speedChart = new Chart(dom.speedChartCanvas, {
-                type: 'line',
-                data: {
-                    labels: speedLabels,
-                    datasets: [
-                        { label: 'Ligeras (Sim.)', data: [], borderColor: 'rgba(6, 182, 212, 0.8)', backgroundColor: 'rgba(6, 182, 212, 0.2)', fill: true, tension: 0.4, pointRadius: 0 },
-                        { label: 'Pesadas (Sim.)', data: [], borderColor: 'rgba(244, 63, 94, 0.8)', backgroundColor: 'rgba(244, 63, 94, 0.2)', fill: true, tension: 0.4, pointRadius: 0 },
-                        { label: 'Ligeras (Teórica)', data: [], borderColor: '#06b6d4', fill: false, tension: 0.4, pointRadius: 0, borderDash: [5, 5] },
-                        { label: 'Pesadas (Teórica)', data: [], borderColor: '#f43f5e', fill: false, tension: 0.4, pointRadius: 0, borderDash: [5, 5] }
-                    ]
-                },
-                options: chartOptions('Velocidad (m/s)')
-            });
+            let speedLabels, speedDatasets;
+            if(isNormalized) {
+                const numNormSpeedBins = 20, maxNormSpeed = 3;
+                const normSpeedBinSize = maxNormSpeed / numNormSpeedBins;
+                speedLabels = Array.from({length: numNormSpeedBins}, (_, i) => (i * normSpeedBinSize).toFixed(2));
+                speedDatasets = [
+                    { label: 'Ligeras (Sim.)', data: [], borderColor: 'rgba(6, 182, 212, 0.8)', backgroundColor: 'rgba(6, 182, 212, 0.2)', fill: true, tension: 0.4, pointRadius: 0 },
+                    { label: 'Pesadas (Sim.)', data: [], borderColor: 'rgba(244, 63, 94, 0.8)', backgroundColor: 'rgba(244, 63, 94, 0.2)', fill: true, tension: 0.4, pointRadius: 0 },
+                ];
+            } else {
+                const numSpeedBins = 20, maxSpeed = 1500;
+                const speedBinSize = maxSpeed / numSpeedBins;
+                speedLabels = Array.from({length: numSpeedBins}, (_, i) => `${Math.round(i * speedBinSize)}`);
+                speedDatasets = [
+                    { label: 'Ligeras (Sim.)', data: [], borderColor: 'rgba(6, 182, 212, 0.8)', backgroundColor: 'rgba(6, 182, 212, 0.2)', fill: true, tension: 0.4, pointRadius: 0 },
+                    { label: 'Pesadas (Sim.)', data: [], borderColor: 'rgba(244, 63, 94, 0.8)', backgroundColor: 'rgba(244, 63, 94, 0.2)', fill: true, tension: 0.4, pointRadius: 0 },
+                ];
+            }
 
+            speedChart = new Chart(dom.speedChartCanvas, { type: 'line', data: { labels: speedLabels, datasets: speedDatasets }, options: speedChartOptions });
+
+            // Energy Chart
             const numEnergyBins = 20, maxEnergy = 1e-20;
             const energyBinSize = maxEnergy / numEnergyBins;
             const energyLabels = Array.from({length: numEnergyBins}, (_, i) => (i * energyBinSize).toExponential(1));
@@ -1189,7 +1190,14 @@
                         { label: 'Pesadas', data: [], borderColor: '#f43f5e', backgroundColor: 'rgba(244, 63, 94, 0.2)', fill: true, tension: 0.4, pointRadius: 0 }
                     ]
                 },
-                options: chartOptions('Energía Cinética (J)', true)
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    scales: {
+                        x: { title: { display: true, text: 'Energía Cinética (J)', color: '#9ca3af' }, grid: { color: 'rgba(156, 163, 175, 0.1)' }, ticks: { color: '#9ca3af', font: { size: 10 }, callback: (value, index) => (index % 2 === 0 ? Number.parseFloat(energyLabels[index]).toExponential(0) : '') }},
+                        y: { title: { display: true, text: 'Nº de Partículas', color: '#9ca3af' }, beginAtZero: true, grid: { color: 'rgba(156, 163, 175, 0.1)' }, ticks: { color: '#9ca3af', font: { size: 10 }, stepSize: 1 }, suggestedMax: 10 }
+                    },
+                    plugins: { legend: { labels: { color: '#9ca3af', padding: 20 } } }
+                }
             });
         }
         
@@ -1229,15 +1237,16 @@
                         <div class="space-y-3">
                             <p><strong>Temperatura y Energía Cinética:</strong> La temperatura de un gas es una medida directa de la energía cinética media de sus partículas. La simulación muestra este valor (⟨Eₖ⟩) calculado en Julios, que cumple la relación:</p>
                              <p class='text-center text-sm font-mono bg-slate-900 p-2 rounded'>⟨Eₖ⟩ = ³/₂ kₒ T</p>
-                            <p><strong>Distribución de Maxwell-Boltzmann:</strong> La curva teórica (línea discontinua) que se superpone en la gráfica de velocidad representa la distribución de Maxwell-Boltzmann. Esta es la fórmula que predice cuántas partículas en un gas a una temperatura T se moverán a una cierta velocidad v.</p>
-                            <p class='text-center text-sm font-mono bg-slate-900 p-2 rounded'>f(v) = 4π (m / 2πkₒT)³/² v² e<sup>-mv²/2kₒT</sup></p>
-                            <p><strong>Velocidades Notables:</strong> En la gráfica y en los parámetros del sistema verás tres velocidades características:</p>
+                            <p><strong>Distribución de Maxwell-Boltzmann:</strong> La gráfica de velocidad muestra la distribución de Maxwell-Boltzmann. Esta predice cuántas partículas en un gas a una temperatura T se moverán a una cierta velocidad v.</p>
+                             <p class='text-center text-sm font-mono bg-slate-900 p-2 rounded'>f(v) = 4π (m / 2πkₒT)³/² v² e<sup>-mv²/2kₒT</sup></p>
+                            <p><strong>Normalización (¡El WOW!):</strong> Al pulsar "Normalizar Gráfica", el eje de velocidad se recalcula como v/vᵣₘₛ. Verás que las curvas de partículas ligeras y pesadas, antes distintas, colapsan en una sola curva universal. Esto demuestra que, estadísticamente, todos los gases se comportan igual independientemente de la masa de sus partículas si se escalan por su velocidad RMS.</p>
+                            <p><strong>Velocidades Notables:</strong> En los parámetros del sistema verás tres velocidades características:</p>
                             <ul class="list-disc list-inside text-sm text-gray-300 space-y-2 mt-1 pl-4">
-                                <li><strong>Velocidad más probable (vₚ):</strong> La velocidad a la que se encuentra el mayor número de partículas. Es el pico de la curva de distribución. <br> vₚ = √(2kₒT / m)</li>
-                                <li><strong>Velocidad media (v̄):</strong> El promedio de las velocidades de todas las partículas. <br> v̄ = √(8kₒT / πm)</li>
-                                <li><strong>Velocidad RMS (vᵣₘₛ):</strong> La raíz cuadrada de la velocidad cuadrática media. Está relacionada con la energía cinética media del gas. <br> vᵣₘₛ = √(3kₒT / m)</li>
+                                <li><strong>Velocidad más probable (vₚ):</strong> El pico de la curva de distribución. <br> vₚ = √(2kₒT / m)</li>
+                                <li><strong>Velocidad media (v̄):</strong> El promedio de las velocidades. <br> v̄ = √(8kₒT / πm)</li>
+                                <li><strong>Velocidad RMS (vᵣₘₛ):</strong> Relacionada con la energía cinética media. <br> vᵣₘₛ = √(3kₒT / m)</li>
                             </ul>
-                            <p><strong>Origen Microscópico de la Presión:</strong> La presión de un gas se debe a la fuerza ejercida por las innumerables colisiones de sus partículas contra las paredes del recipiente. Cada choque transfiere momento lineal. La fuerza es el cambio de momento por unidad de tiempo (F = Δp/Δt), y la presión es fuerza por unidad de área (P = F/A). El "Presiómetro" calcula esta presión a partir de los choques y la compara con la presión ideal.</p>
+                            <p><strong>Origen Microscópico de la Presión:</strong> La presión de un gas se debe a los choques de sus partículas contra las paredes. La simulación calcula esta "Presión Cinética" a partir del movimiento de las partículas (P = (1/3)ρ⟨v²⟩) y la compara con la presión teórica de la ley de los gases ideales.</p>
                         </div>
                     </div>
                      <div>
@@ -1252,11 +1261,19 @@
             
             resetSimulation();
             
-            pressureInterval = setInterval(updateCollisionPressure, 500);
+            pressureInterval = setInterval(updateKineticPressure, 500);
 
             dom.infoBtn.addEventListener('click', () => showPopup(infoTitle, infoMessage));
             dom.topResetBtn.addEventListener('click', resetSimulation);
             dom.toggleModeBtn.addEventListener('click', toggleAdvancedMode);
+            dom.normalizeChartBtn.addEventListener('click', () => {
+                state.isChartNormalized = !state.isChartNormalized;
+                dom.normalizeChartBtn.classList.toggle('bg-emerald-500', state.isChartNormalized);
+                dom.normalizeChartBtn.classList.toggle('bg-slate-600', !state.isChartNormalized);
+                dom.normalizeChartBtn.textContent = state.isChartNormalized ? 'Gráfica Normalizada' : 'Normalizar Gráfica';
+                initCharts();
+            });
+
             dom.addLight1.addEventListener('click', () => addParticles('light', 1));
             dom.addLight10.addEventListener('click', () => addParticles('light', 10));
             dom.addHeavy1.addEventListener('click', () => addParticles('heavy', 1));
