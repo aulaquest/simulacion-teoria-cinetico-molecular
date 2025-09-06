@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Simulador de Partículas v2.3</title>
+    <title>Simulador de Partículas v2.4</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-annotation/1.4.0/chartjs-plugin-annotation.min.js"></script>
@@ -687,15 +687,16 @@
             
             const pressureToDisplay = state.pressure;
             const tempK = state.temperature;
+            const pressureDecimals = state.pressureUnit === 'atm' ? 4 : 2;
 
             const pressureValue = state.pressureUnit === 'atm' ? pressureToDisplay : pressureToDisplay * 101.325;
             const pressureUnitLabel = state.pressureUnit === 'atm' ? 'atm' : 'kPa';
-            dom.pressureDisplay.textContent = `${pressureValue.toFixed(2)} ${pressureUnitLabel}`;
-            dom.idealPressureDisplay.textContent = `${pressureValue.toFixed(2)} ${pressureUnitLabel}`;
+            dom.pressureDisplay.textContent = `${pressureValue.toFixed(pressureDecimals)} ${pressureUnitLabel}`;
+            dom.idealPressureDisplay.textContent = `${pressureValue.toFixed(pressureDecimals)} ${pressureUnitLabel}`;
             
             const kineticPressureValue = state.pressureUnit === 'atm' ? state.kineticPressure : state.kineticPressure * 101.325;
-            dom.collisionPressureDisplay.textContent = `${kineticPressureValue.toFixed(2)} ${pressureUnitLabel}`;
-            dom.pressureMeterDisplay.textContent = `${kineticPressureValue.toFixed(2)} ${pressureUnitLabel}`;
+            dom.collisionPressureDisplay.textContent = `${kineticPressureValue.toFixed(pressureDecimals)} ${pressureUnitLabel}`;
+            dom.pressureMeterDisplay.textContent = `${kineticPressureValue.toFixed(pressureDecimals)} ${pressureUnitLabel}`;
 
             const tempValue = state.tempUnit === 'K' ? tempK : tempK - 273.15;
             const tempUnitLabel = state.tempUnit === 'K' ? 'K' : '°C';
@@ -1250,7 +1251,6 @@
         function toggleDimensionMode() {
             state.is3D = !state.is3D;
             dom.toggleDimBtn.textContent = state.is3D ? 'Cambiar a 2D' : 'Cambiar a 3D';
-            // Forzar un reinicio completo para que las partículas se inicialicen con las nuevas velocidades
             resetSimulation();
         }
 
