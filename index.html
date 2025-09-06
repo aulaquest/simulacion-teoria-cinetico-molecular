@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Simulador de Partículas v2.2</title>
+    <title>Simulador de Partículas v2.3</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-annotation/1.4.0/chartjs-plugin-annotation.min.js"></script>
@@ -189,6 +189,11 @@
         .advanced-mode-active .advanced-feature.grid {
             display: grid;
         }
+        
+        .info-2d, .info-3d { display: none; }
+        .mode-2d .info-2d { display: block; }
+        .mode-3d .info-3d { display: block; }
+
 
         @keyframes container-shake {
             0%, 100% { transform: translateX(0); } 10%, 30%, 50%, 70%, 90% { transform: translateX(-5px); } 20%, 40%, 60%, 80% { transform: translateX(5px); }
@@ -300,10 +305,11 @@
 
     <!-- Panel de Controles -->
     <div id="control-panel" class="w-full md:w-[40%] control-panel p-5 z-10 border-t md:border-t-0 md:border-l border-slate-800 md:h-screen md:sticky md:top-0 md:overflow-y-auto flex flex-col">
-        <div class="flex justify-start gap-2 pb-4 border-b border-slate-700 mb-4">
+        <div class="grid grid-cols-2 gap-2 pb-4 border-b border-slate-700 mb-4">
             <button id="info-btn" class="px-3 py-1.5 bg-sky-600 hover:bg-sky-700 text-white font-semibold text-xs rounded-md transition">Info</button>
             <button id="top-reset-btn" class="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white font-semibold text-xs rounded-md transition">Reiniciar</button>
-            <button id="toggle-mode-btn" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-md transition flex-grow">Activar Modo Avanzado</button>
+            <button id="toggle-dim-btn" class="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white font-semibold text-xs rounded-md transition">Cambiar a 3D</button>
+            <button id="toggle-mode-btn" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-md transition">Activar Modo Avanzado</button>
         </div>
 
         <div class="max-w-md mx-auto space-y-4 flex-grow w-full">
@@ -518,6 +524,7 @@
             heavyVavgDisplay: document.getElementById('heavy-vavg-display'),
             heavyVrmsDisplay: document.getElementById('heavy-vrms-display'),
             toggleModeBtn: document.getElementById('toggle-mode-btn'),
+            toggleDimBtn: document.getElementById('toggle-dim-btn'),
             controlPanel: document.getElementById('control-panel'),
             pressureMeter: document.getElementById('pressure-meter'),
             pressureMeterDisplay: document.getElementById('pressure-meter-display'),
@@ -561,6 +568,7 @@
             isCountingCollisions: false,
             isAdvancedMode: false,
             isChartNormalized: false,
+            is3D: false,
         };
 
         class Particle {
@@ -577,9 +585,10 @@
                 this.y = this.radius + Math.random() * (dom.container.clientHeight - 2 * this.radius);
                 
                 const angle = Math.random() * 2 * Math.PI;
-                // Correct speed initialization for 2D, based on <Ek> = kT
-                const v_rms = Math.sqrt((2 * BOLTZMANN * state.temperature) / this.massKg);
+                const degreesOfFreedom = state.is3D ? 3 : 2;
+                const v_rms = Math.sqrt((degreesOfFreedom * BOLTZMANN * state.temperature) / this.massKg);
                 const speed = v_rms / SPEED_CONVERSION_FACTOR;
+
                 this.vx = Math.cos(angle) * speed;
                 this.vy = Math.sin(angle) * speed;
             }
@@ -665,10 +674,9 @@
              const totalParticles = state.lightCount + state.heavyCount;
              const V_m3 = state.volume / 1000.0;
              if (totalParticles > 0 && V_m3 > 0) {
-                // Using 2D ideal gas law: P*V = N*k*T
                 const N_scaled = totalParticles * (NA / 100.0);
                 const P_Pa = (N_scaled * BOLTZMANN * state.temperature) / V_m3;
-                state.pressure = P_Pa / 101325; // Convert Pa to atm
+                state.pressure = P_Pa / 101325; 
              } else {
                 state.pressure = 0;
              }
@@ -743,7 +751,7 @@
 
             maxContainerWidth = dom.containerWrapper.clientWidth;
             
-            state = { pressure: 0.0, kineticPressure: 0.0, volume: MAX_VOLUME, temperature: 300, lightCount: 0, heavyCount: 0, lidOpenRatio: 0.0, isDraggingLid: false, maxVolumeWarningShown: false, minVolumeWarningShown: false, pressureUnit: 'atm', tempUnit: 'K', stopwatchRunning: false, stopwatchTime: 0, stopwatchStart: 0, isCountingCollisions: false, isAdvancedMode: false, isChartNormalized: false };
+            state = { pressure: 0.0, kineticPressure: 0.0, volume: MAX_VOLUME, temperature: 300, lightCount: 0, heavyCount: 0, lidOpenRatio: 0.0, isDraggingLid: false, maxVolumeWarningShown: false, minVolumeWarningShown: false, pressureUnit: 'atm', tempUnit: 'K', stopwatchRunning: false, stopwatchTime: 0, stopwatchStart: 0, isCountingCollisions: false, isAdvancedMode: false, isChartNormalized: false, is3D: state.is3D };
             particles = [];
             escapedParticles = [];
             wallCollisionCount = 0;
@@ -775,6 +783,9 @@
         function showPopup(title, message) {
             dom.popupTitle.textContent = title;
             dom.popupMessage.innerHTML = message;
+            
+            dom.popupMessage.querySelector('.info-2d').style.display = state.is3D ? 'none' : 'block';
+            dom.popupMessage.querySelector('.info-3d').style.display = state.is3D ? 'block' : 'none';
             
             const advancedContent = dom.popupMessage.querySelector('.advanced-feature');
             if (advancedContent) {
@@ -901,10 +912,10 @@
             });
             
             const avgKE = totalKE / totalParticles;
-            
-            // For a 2D gas, P = N * <Ek> / V
             const N_scaled = totalParticles * (NA / 100);
-            const pressureInPa = (N_scaled * avgKE) / V_m3;
+
+            const degreesOfFreedom = state.is3D ? 3 : 2;
+            const pressureInPa = (N_scaled / V_m3) * avgKE * (2 / degreesOfFreedom) ;
             
             let smoothedPressure = state.kineticPressure * 0.9 + (pressureInPa / 101325) * 0.1;
             state.kineticPressure = smoothedPressure;
@@ -915,23 +926,33 @@
             const tempK = state.temperature;
             const lightMassKg = 1 * AMU * 20;
             const heavyMassKg = 4 * AMU * 20;
+            const degreesOfFreedom = state.is3D ? 3 : 2;
         
             const snapshot = {
                 'T (K)': tempK.toFixed(0),
                 'N Total': state.lightCount + state.heavyCount,
-                '⟨Eₖ⟩ (J)': ((state.lightCount + state.heavyCount > 0) ? (BOLTZMANN * tempK) : 0),
+                '⟨Eₖ⟩ (J)': ((state.lightCount + state.heavyCount > 0) ? (degreesOfFreedom/2 * BOLTZMANN * tempK) : 0),
                 'v̅ Sim. L (m/s)': state.lightCount > 0 ? parseFloat(dom.lightAvgSpeedDisplay.textContent) : 0,
                 'v̅ Sim. P (m/s)': state.heavyCount > 0 ? parseFloat(dom.heavyAvgSpeedDisplay.textContent) : 0,
             };
 
             if (state.isAdvancedMode) {
                 snapshot['P Cinética (atm)'] = state.kineticPressure;
-                snapshot['vₚ Teo. L (m/s)'] = Math.sqrt(BOLTZMANN * tempK / lightMassKg);
-                snapshot['v̅ Teo. L (m/s)'] = Math.sqrt(Math.PI * BOLTZMANN * tempK / (2 * lightMassKg));
-                snapshot['vᵣₘₛ Teo. L (m/s)'] = Math.sqrt(2 * BOLTZMANN * tempK / lightMassKg);
-                snapshot['vₚ Teo. P (m/s)'] = Math.sqrt(BOLTZMANN * tempK / heavyMassKg);
-                snapshot['v̅ Teo. P (m/s)'] = Math.sqrt(Math.PI * BOLTZMANN * tempK / (2 * heavyMassKg));
-                snapshot['vᵣₘₛ Teo. P (m/s)'] = Math.sqrt(2 * BOLTZMANN * tempK / heavyMassKg);
+                if(state.is3D) {
+                    snapshot['vₚ Teo. L (m/s)'] = Math.sqrt(2 * BOLTZMANN * tempK / lightMassKg);
+                    snapshot['v̅ Teo. L (m/s)'] = Math.sqrt(8 * BOLTZMANN * tempK / (Math.PI * lightMassKg));
+                    snapshot['vᵣₘₛ Teo. L (m/s)'] = Math.sqrt(3 * BOLTZMANN * tempK / lightMassKg);
+                    snapshot['vₚ Teo. P (m/s)'] = Math.sqrt(2 * BOLTZMANN * tempK / heavyMassKg);
+                    snapshot['v̅ Teo. P (m/s)'] = Math.sqrt(8 * BOLTZMANN * tempK / (Math.PI * heavyMassKg));
+                    snapshot['vᵣₘₛ Teo. P (m/s)'] = Math.sqrt(3 * BOLTZMANN * tempK / heavyMassKg);
+                } else {
+                    snapshot['vₚ Teo. L (m/s)'] = Math.sqrt(BOLTZMANN * tempK / lightMassKg);
+                    snapshot['v̅ Teo. L (m/s)'] = Math.sqrt(Math.PI * BOLTZMANN * tempK / (2 * lightMassKg));
+                    snapshot['vᵣₘₛ Teo. L (m/s)'] = Math.sqrt(2 * BOLTZMANN * tempK / lightMassKg);
+                    snapshot['vₚ Teo. P (m/s)'] = Math.sqrt(BOLTZMANN * tempK / heavyMassKg);
+                    snapshot['v̅ Teo. P (m/s)'] = Math.sqrt(Math.PI * BOLTZMANN * tempK / (2 * heavyMassKg));
+                    snapshot['vᵣₘₛ Teo. P (m/s)'] = Math.sqrt(2 * BOLTZMANN * tempK / heavyMassKg);
+                }
             }
             
             dataLog.push(snapshot);
@@ -1027,9 +1048,11 @@
             const tempK = state.temperature;
             const lightMassKg = 1 * AMU * 20;
             const heavyMassKg = 4 * AMU * 20;
+            
+            const degreesOfFreedom = state.is3D ? 3 : 2;
 
-            const v_rms_l_teo = Math.sqrt(2 * BOLTZMANN * tempK / lightMassKg) || 1;
-            const v_rms_h_teo = Math.sqrt(2 * BOLTZMANN * tempK / heavyMassKg) || 1;
+            const v_rms_l_teo = Math.sqrt(degreesOfFreedom * BOLTZMANN * tempK / lightMassKg) || 1;
+            const v_rms_h_teo = Math.sqrt(degreesOfFreedom * BOLTZMANN * tempK / heavyMassKg) || 1;
             
             const numSpeedBins = 20, maxSpeed = 1500;
             const speedBinSize = maxSpeed / numSpeedBins;
@@ -1084,11 +1107,18 @@
             dom.lightAvgSpeedDisplay.textContent = `${avgLightSpeed.toFixed(0)} m/s`;
             dom.heavyAvgSpeedDisplay.textContent = `${avgHeavySpeed.toFixed(0)} m/s`;
             
-            const v_p_l = Math.sqrt(BOLTZMANN * tempK / lightMassKg);
-            const v_avg_l = Math.sqrt(Math.PI * BOLTZMANN * tempK / (2 * lightMassKg));
-            
-            const v_p_h = Math.sqrt(BOLTZMANN * tempK / heavyMassKg);
-            const v_avg_h = Math.sqrt(Math.PI * BOLTZMANN * tempK / (2 * heavyMassKg));
+            let v_p_l, v_avg_l, v_p_h, v_avg_h;
+            if(state.is3D) {
+                v_p_l = Math.sqrt(2 * BOLTZMANN * tempK / lightMassKg);
+                v_avg_l = Math.sqrt(8 * BOLTZMANN * tempK / (Math.PI * lightMassKg));
+                v_p_h = Math.sqrt(2 * BOLTZMANN * tempK / heavyMassKg);
+                v_avg_h = Math.sqrt(8 * BOLTZMANN * tempK / (Math.PI * heavyMassKg));
+            } else {
+                v_p_l = Math.sqrt(BOLTZMANN * tempK / lightMassKg);
+                v_avg_l = Math.sqrt(Math.PI * BOLTZMANN * tempK / (2 * lightMassKg));
+                v_p_h = Math.sqrt(BOLTZMANN * tempK / heavyMassKg);
+                v_avg_h = Math.sqrt(Math.PI * BOLTZMANN * tempK / (2 * heavyMassKg));
+            }
 
             dom.lightVpDisplay.textContent = `${v_p_l.toFixed(0)} m/s`;
             dom.lightVavgDisplay.textContent = `${v_avg_l.toFixed(0)} m/s`;
@@ -1216,6 +1246,13 @@
                 }
             }
         }
+        
+        function toggleDimensionMode() {
+            state.is3D = !state.is3D;
+            dom.toggleDimBtn.textContent = state.is3D ? 'Cambiar a 2D' : 'Cambiar a 3D';
+            // Forzar un reinicio completo para que las partículas se inicialicen con las nuevas velocidades
+            resetSimulation();
+        }
 
 
         function init() {
@@ -1230,29 +1267,42 @@
                             <li><strong>Añadir Partículas:</strong> Usa los botones '+' en el panel derecho para inyectar partículas ligeras (azules) o pesadas (rojas).</li>
                             <li><strong>Controlar Temperatura:</strong> Mantén pulsados los botones 🔥 (calentar) o 🧊 (enfriar) bajo el recipiente.</li>
                             <li><strong>Abrir la Tapa:</strong> Arrastra el tirador gris en la parte superior del recipiente para dejar escapar partículas.</li>
+                            <li><strong>Cambiar Dimensión:</strong> Alterna entre los modelos de 2 y 3 dimensiones. Todos los cálculos se ajustarán automáticamente.</li>
                             <li><strong>Modo Avanzado:</strong> Activa esta opción para ver gráficas y parámetros físicos detallados.</li>
                         </ul>
                     </div>
                     <div class="advanced-feature">
                         <h4 class="font-bold text-base text-sky-400">Análisis Físico (Modo Avanzado)</h4>
-                        <p class="text-xs text-gray-400 mb-2">Las gráficas y parámetros te permiten comparar el comportamiento de las partículas simuladas con la teoría cinética de los gases.</p>
-                        <div class="space-y-3">
-                            <p><strong>Temperatura y Energía Cinética:</strong> La temperatura de un gas es una medida directa de la energía cinética media de sus partículas. En 2D, esta relación es:</p>
-                             <p class='text-center text-sm font-mono bg-slate-900 p-2 rounded'>⟨Eₖ⟩ = kₒ T</p>
-                            <p><strong>Distribución de Maxwell-Boltzmann (2D):</strong> La gráfica de velocidad muestra cómo se distribuyen las velocidades de las partículas. La fórmula para 2D es:</p>
-                             <p class='text-center text-sm font-mono bg-slate-900 p-2 rounded'>f(v) = (m/kₒT) v e<sup>-mv²/2kₒT</sup></p>
-                            <p><strong>Normalización (¡El WOW!):</strong> Al pulsar "Normalizar Gráfica", el eje de velocidad se recalcula como v/vᵣₘₛ. Verás que las curvas de partículas ligeras y pesadas, antes distintas, colapsan en una sola curva universal. Esto demuestra que, estadísticamente, todos los gases se comportan igual independientemente de la masa si se escalan por su velocidad RMS.</p>
-                            <p><strong>Velocidades Notables (2D):</strong> En los parámetros del sistema verás tres velocidades características para un sistema 2D:</p>
-                            <ul class="list-disc list-inside text-sm text-gray-300 space-y-2 mt-1 pl-4">
-                                <li><strong>Velocidad más probable (vₚ):</strong> vₚ = √(kₒT / m)</li>
-                                <li><strong>Velocidad media (v̄):</strong> v̄ = √(πkₒT / 2m)</li>
-                                <li><strong>Velocidad RMS (vᵣₘₛ):</strong> vᵣₘₛ = √(2kₒT / m)</li>
-                            </ul>
-                            <p><strong>Origen Microscópico de la Presión:</strong> La presión de un gas se debe a los choques de sus partículas contra las paredes. La simulación calcula esta "Presión Cinética" a partir del movimiento de las partículas (P = (1/2)ρ⟨v²⟩ para 2D) y la compara con la presión teórica de la ley de los gases ideales.</p>
+                        
+                        <div class="info-2d">
+                            <p class="text-xs text-gray-400 mb-2">Mostrando fórmulas para un sistema <strong>2D</strong>.</p>
+                            <div class="space-y-3">
+                                <p><strong>Temperatura y Energía Cinética:</strong> ⟨Eₖ⟩ = kₒ T</p>
+                                <p><strong>Velocidades Notables:</strong><br>
+                                    vₚ = √(kₒT / m)<br>
+                                    v̄ = √(πkₒT / 2m)<br>
+                                    vᵣₘₛ = √(2kₒT / m)
+                                </p>
+                                <p><strong>Presión Cinética:</strong> P = (1/2)ρ⟨v²⟩</p>
+                            </div>
                         </div>
+
+                        <div class="info-3d">
+                             <p class="text-xs text-gray-400 mb-2">Mostrando fórmulas para un sistema <strong>3D</strong>.</p>
+                             <div class="space-y-3">
+                                <p><strong>Temperatura y Energía Cinética:</strong> ⟨Eₖ⟩ = ³/₂ kₒ T</p>
+                                <p><strong>Velocidades Notables:</strong><br>
+                                    vₚ = √(2kₒT / m)<br>
+                                    v̄ = √(8kₒT / πm)<br>
+                                    vᵣₘₛ = √(3kₒT / m)
+                                </p>
+                                <p><strong>Presión Cinética:</strong> P = (1/3)ρ⟨v²⟩</p>
+                            </div>
+                        </div>
+                        <p class="mt-3"><strong>Normalización (¡El WOW!):</strong> Al pulsar "Normalizar Gráfica", el eje de velocidad se recalcula como v/vᵣₘₛ. Verás que las curvas de partículas ligeras y pesadas, antes distintas, colapsan en una sola curva universal. Esto demuestra que, estadísticamente, todos los gases se comportan igual independientemente de la masa si se escalan por su velocidad RMS.</p>
                     </div>
                      <div>
-                        <h4 class="font-bold text-base text-sky-400">Registro de Datos</h4>
+                        <h4 class="font-bold text-base text-sky-400 mt-4">Registro de Datos</h4>
                         <ul class="list-disc list-inside text-sm text-gray-300 space-y-1 mt-1">
                             <li><strong>Añadir Instantánea:</strong> Guarda una "foto" del estado actual de la simulación. En modo avanzado, guarda todos los parámetros teóricos y simulados.</li>
                             <li><strong>Exportar:</strong> Puedes exportar todos los datos que has recogido a un archivo CSV para analizarlos en una hoja de cálculo.</li>
@@ -1268,6 +1318,7 @@
             dom.infoBtn.addEventListener('click', () => showPopup(infoTitle, infoMessage));
             dom.topResetBtn.addEventListener('click', resetSimulation);
             dom.toggleModeBtn.addEventListener('click', toggleAdvancedMode);
+            dom.toggleDimBtn.addEventListener('click', toggleDimensionMode);
             dom.normalizeChartBtn.addEventListener('click', () => {
                 state.isChartNormalized = !state.isChartNormalized;
                 dom.normalizeChartBtn.classList.toggle('bg-emerald-500', state.isChartNormalized);
